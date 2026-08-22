@@ -1,0 +1,45 @@
+# ============================================================
+# KAVACH-AIDR — Requirements (Phase 1: Core Pipeline)
+# 100% open-source, 100% sovereign, zero foreign API calls
+# ============================================================
+
+# --- CLI & Display ---
+rich>=13.7.0              # Beautiful terminal output, progress bars, tables
+click>=8.1.7              # CLI argument parsing
+
+# --- Static Analysis ---
+bandit>=1.7.8             # Python security linter (AST-based)
+semgrep>=1.50.0           # Pattern-based static analysis engine
+
+# --- Local LLM Inference (no internet, no foreign API) ---
+# Phi-3-mini (Microsoft) or CodeLlama (Meta) via llama.cpp
+# Install with: pip install llama-cpp-python
+# For CPU-only: pip install llama-cpp-python (default)
+# For CUDA GPU: CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python
+llama-cpp-python>=0.2.56
+
+# --- Formal Verification ---
+z3-solver>=4.12.4.0       # Microsoft Z3 SMT solver (pip-installable, no C compiler needed)
+
+# --- API Server (for future UI integration) ---
+fastapi>=0.111.0
+uvicorn>=0.30.0
+pydantic>=2.7.0
+
+# --- Data & Utilities ---
+python-dotenv>=1.0.1
+PyYAML>=6.0.1
+toml>=0.10.2
+
+# --- Testing ---
+pytest>=8.2.0
+pytest-cov>=5.0.0
+
+# ============================================================
+# Phase 2 (install when ready — not needed for Phase 1)
+# ============================================================
+# torch>=2.3.0
+# dgl>=2.1.0              # Graph neural network
+# tree-sitter>=0.22.0
+# tree-sitter-python>=0.21.0
+# atheris>=2.3.0          # Google Python fuzzer

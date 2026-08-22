@@ -1,0 +1,89 @@
+rules:
+  # ── Dangerous Deserialization ──────────────────────────────────────────────
+
+  - id: kavach-pickle-loads-unsafe
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads($DATA)
+          - pattern: pickle.load($FILE)
+    message: |
+      CRITICAL: pickle.loads() on untrusted data allows Remote Code Execution.
+      An adversary who controls '$DATA' can execute arbitrary Python code on
+      this system. Never deserialise pickle data from untrusted sources.
+      Use JSON or protobuf for data exchange instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502"]
+      owasp: ["A08:2021"]
+      confidence: HIGH
+      kavach_priority: CRITICAL
+
+  - id: kavach-yaml-load-unsafe
+    pattern: yaml.load($DATA)
+    message: |
+      yaml.load() without Loader=yaml.SafeLoader can deserialise arbitrary
+      Python objects → Remote Code Execution. Use yaml.safe_load($DATA) instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502"]
+      confidence: HIGH
+
+  - id: kavach-marshal-loads-unsafe
+    pattern: marshal.loads($DATA)
+    message: |
+      marshal.loads() on untrusted bytecode can execute arbitrary code.
+      marshal is for CPython internal use only. Use JSON for data serialisation.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-502"]
+      confidence: HIGH
+
+  # ── Code Injection ─────────────────────────────────────────────────────────
+
+  - id: kavach-eval-user-input
+    patterns:
+      - pattern: eval($X)
+      - pattern-not: eval("...")   # string literals are lower risk
+    message: |
+      eval() with dynamic input allows arbitrary code execution.
+      If parsing data, use ast.literal_eval() for safe Python literal evaluation,
+      or json.loads() for JSON data.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78", "CWE-94"]
+      confidence: MEDIUM
+
+  - id: kavach-exec-user-input
+    patterns:
+      - pattern: exec($X)
+      - pattern-not: exec("...")
+    message: |
+      exec() with dynamic input allows arbitrary code execution.
+      Redesign to avoid dynamic code execution entirely.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78", "CWE-94"]
+      confidence: MEDIUM
+
+  # ── Path Traversal ─────────────────────────────────────────────────────────
+
+  - id: kavach-path-traversal-open
+    patterns:
+      - pattern: open($BASE + $USER_INPUT, ...)
+      - pattern: open(f"...{$VAR}...", ...)
+      - pattern: open($PATH, ...)
+      - pattern-not: open("...", ...)   # string literals are safe
+    message: |
+      Potential path traversal: file path includes user-controlled input.
+      Validate paths using pathlib.Path.resolve() and confirm they're
+      within the expected base directory before opening.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-22"]
+      confidence: LOW

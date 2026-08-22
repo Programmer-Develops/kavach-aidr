@@ -1,0 +1,64 @@
+rules:
+  # ── SQL Injection ──────────────────────────────────────────────────────────
+
+  - id: kavach-sqli-string-concat
+    patterns:
+      - pattern: |
+          $CURSOR.execute("..." + $USER_INPUT + "...")
+      - pattern: |
+          $CURSOR.execute($QUERY + $X)
+      - pattern: |
+          $CURSOR.execute(f"...{$VAR}...")
+      - pattern: |
+          $CURSOR.execute("...%s..." % $VAR)
+    message: |
+      SQL Injection via string concatenation. User-controlled input '$VAR' is
+      directly embedded in a SQL query. Use parameterised queries instead:
+      cursor.execute("SELECT ... WHERE x = ?", (user_input,))
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      owasp: ["A03:2021"]
+      category: security
+      confidence: HIGH
+      kavach_priority: CRITICAL
+
+  - id: kavach-sqli-format-string
+    pattern: |
+      $CURSOR.execute("..." % (...))
+    message: |
+      SQL Injection via % string formatting. Build queries with placeholders only.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-89"]
+      confidence: HIGH
+
+  # ── Command Injection ──────────────────────────────────────────────────────
+
+  - id: kavach-cmdi-os-system
+    patterns:
+      - pattern: os.system($CMD + $INPUT)
+      - pattern: os.system(f"...{$VAR}...")
+      - pattern: os.system("..." + $VAR)
+    message: |
+      Command Injection via os.system(). User-controlled input in shell commands
+      allows arbitrary OS command execution. Use subprocess with a list of args
+      and shell=False instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-78"]
+      confidence: HIGH
+
+  - id: kavach-cmdi-subprocess-shell-true
+    pattern: subprocess.run(..., shell=True, ...)
+    message: |
+      Potential Command Injection: shell=True with subprocess allows shell
+      metacharacter injection. Pass command as a list with shell=False.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-78"]
+      confidence: MEDIUM

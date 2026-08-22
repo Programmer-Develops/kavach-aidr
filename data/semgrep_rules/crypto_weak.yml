@@ -1,0 +1,64 @@
+rules:
+  # ── Broken Hash Algorithms ─────────────────────────────────────────────────
+
+  - id: kavach-weak-hash-md5
+    pattern: hashlib.md5(...)
+    message: |
+      MD5 is cryptographically broken (collision attacks since 2004).
+      For integrity checks: use hashlib.sha256() or hashlib.sha3_256().
+      For password hashing: use bcrypt, scrypt, or argon2-cffi.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-326", "CWE-328"]
+      confidence: HIGH
+
+  - id: kavach-weak-hash-sha1
+    pattern: hashlib.sha1(...)
+    message: |
+      SHA1 is deprecated for security use (SHAttered collision attack 2017).
+      Replace with hashlib.sha256() or hashlib.sha3_256().
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-326", "CWE-328"]
+      confidence: HIGH
+
+  # ── Insecure Random ────────────────────────────────────────────────────────
+
+  - id: kavach-insecure-random-security
+    patterns:
+      - pattern-either:
+          - pattern: random.randint(...)
+          - pattern: random.random()
+          - pattern: random.choice(...)
+          - pattern: random.randbytes(...)
+      - pattern-not-inside: |
+          # ... [non-security use]
+    message: |
+      Python's 'random' module is NOT cryptographically secure (uses Mersenne
+      Twister — predictable from 624 outputs). For security-sensitive values
+      (session tokens, nonces, OTPs): use the 'secrets' module instead:
+      secrets.token_hex(32), secrets.token_bytes(32).
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: ["CWE-338"]
+      confidence: MEDIUM
+
+  # ── Insecure TLS/SSL ──────────────────────────────────────────────────────
+
+  - id: kavach-ssl-no-verify
+    patterns:
+      - pattern-either:
+          - pattern: ssl.CERT_NONE
+          - pattern: verify=False
+          - pattern: check_hostname=False
+    message: |
+      TLS certificate verification is disabled. This allows Man-in-the-Middle
+      attacks. Always verify certificates in production military systems.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: ["CWE-295"]
+      confidence: HIGH
