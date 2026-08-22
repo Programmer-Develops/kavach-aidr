@@ -1,0 +1,1 @@
+"""VulnGNN sub-package."""

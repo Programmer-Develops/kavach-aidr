@@ -42,6 +42,14 @@ from kavach.audit.db import AuditDB
 from kavach.audit.audit_logger import AuditLogger
 from kavach.audit.siem_exporter import export_cef, export_json_findings
 
+# ── Phase 2 imports ───────────────────────────────────────────────────────────
+from kavach.verifier.z3_verifier import Z3Verifier, format_result as format_z3, PROVED, COUNTEREX
+from kavach.fuzzer.runner import KavachFuzzer, format_fuzz_comparison
+from kavach.fuzzer.crash_triager import deduplicate_crashes
+from kavach.regression.test_generator import generate_tests
+from kavach.regression.test_runner import run_tests, compare_runs
+from kavach.vuln_gnn.predict import predict_vulnerability
+
 console = Console()
 
 # ── KAVACH ASCII Banner ───────────────────────────────────────────────────────
@@ -78,9 +86,10 @@ def cli():
 @click.option("--top",     "-n", default=5,      help="Number of top findings to reason over (default: 5)")
 @click.option("--output",  "-o", default=None,   help="Output report directory (default: reports/)")
 @click.option("--no-patch",      is_flag=True,   help="Skip patch application (analysis only)")
+@click.option("--deep",          is_flag=True,   help="[Phase 2] Enable Z3 formal verification + fuzzer + GNN + regression tests")
 @click.option("--verbose", "-v", is_flag=True,   help="Verbose LLM output")
 @click.option("--export-cef",    is_flag=True,   help="Export CEF file for SIEM")
-def scan(target, model, top, output, no_patch, verbose, export_cef):
+def scan(target, model, top, output, no_patch, deep, verbose, export_cef):
     """
     Run the full KAVACH-AIDR pipeline on a Python file or directory.
 
@@ -221,13 +230,38 @@ def scan(target, model, top, output, no_patch, verbose, export_cef):
         _print_reasoning(finding, result, i)
 
         # ── Step 5: Apply Patch ───────────────────────────────────────────
+        patched_code = ""
         if not no_patch and result.patch_found and source_code:
             parsed_patch = parse_patch(result.patch_diff)
             patch_result = apply_patch(source_code, parsed_patch, finding.filepath)
             validation   = validate_patch(source_code, patch_result.patched_code) if patch_result.success else None
+            patched_code = patch_result.patched_code if patch_result.success else ""
 
             logger.log_patch_result(finding.finding_id, patch_result)
             _print_patch_result(finding, patch_result, validation)
+
+        # ── Phase 2: Deep Analysis (--deep flag) ──────────────────────────
+        if deep:
+            _run_phase2(
+                finding     = finding,
+                source_code = source_code,
+                patched_code= patched_code,
+                engine      = engine,
+                run_id      = run_id,
+                out_dir_str = str(Path(output) if output else cfg.reports_dir / run_id),
+            )
+
+    # ── GNN scan of all graphs (deep mode) ────────────────────────────────
+    if deep:
+        console.print("\n[bold]VulnGNN Analysis:[/bold]")
+        for graph, py_file in zip(all_graphs, py_files):
+            gnn_pred = predict_vulnerability(graph)
+            icon = "[red]VULN[/red]" if gnn_pred.is_vulnerable else "[green]SAFE[/green]"
+            console.print(
+                f"  {icon} {py_file.name}: "
+                f"{gnn_pred.vulnerability_prob:.0%} vuln probability — "
+                f"{gnn_pred.reasoning[:80]}..."
+            )
 
     # ── Final Report ──────────────────────────────────────────────────────
     elapsed = time.time() - start_time
@@ -351,6 +385,129 @@ def info():
         )
     if not any((MODELS_DIR / s["filename"]).exists() for s in MODELS.values()):
         console.print("\n  [yellow]→ No models downloaded. See models/DOWNLOAD.md[/yellow]")
+
+
+
+# ── Phase 2 orchestrator ──────────────────────────────────────────────────────
+
+def _run_phase2(
+    finding      : object,
+    source_code  : str,
+    patched_code : str,
+    engine       : object,
+    run_id       : str,
+    out_dir_str  : str,
+) -> None:
+    """
+    Run Phase 2 deep analysis on a single finding:
+      1. Z3 formal verification (pre/post patch)
+      2. Smart fuzzer (LLM-guided payloads)
+      3. Auto-generate regression tests
+    """
+    import ast as _ast
+    out_dir = Path(out_dir_str)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    console.print(f"\n  [bold cyan]--- Phase 2: Deep Analysis ---[/bold cyan]")
+
+    # ── Z3 Formal Verification ─────────────────────────────────────────────
+    with console.status("  [Z3] Running formal verification ...", spinner="dots"):
+        verifier = Z3Verifier(timeout_ms=5000)
+        z3_result = verifier.verify(
+            finding_id   = finding.finding_id,
+            vuln_type    = finding.vuln_type,
+            filepath     = finding.filepath,
+            lineno       = finding.lineno,
+            original_src = source_code,
+            patched_src  = patched_code or source_code,
+        )
+
+    console.print(f"  {format_z3(z3_result)}")
+
+    # ── Smart Fuzzer ───────────────────────────────────────────────────────
+    # Extract function name from finding context
+    func_name = _infer_function_name(source_code, finding.lineno)
+    if func_name and source_code:
+        with console.status(
+            f"  [Fuzzer] Running on '{func_name}' ({finding.vuln_type}) ...",
+            spinner="dots",
+        ):
+            fuzzer = KavachFuzzer(llm_engine=engine, max_inputs=50, verbose=False)
+
+            if patched_code:
+                fuzz_comp = fuzzer.compare(
+                    original_src  = source_code,
+                    patched_src   = patched_code,
+                    function_name = func_name,
+                    vuln_type     = finding.vuln_type,
+                    filepath      = finding.filepath,
+                )
+                console.print(format_fuzz_comparison(fuzz_comp))
+
+                # ── Regression Test Generation ─────────────────────────────
+                if fuzz_comp.pre_patch and fuzz_comp.pre_patch.exploitable:
+                    with console.status("  [Regression] Generating test suite ...", spinner="dots"):
+                        test_suite = generate_tests(
+                            function_name      = func_name,
+                            vuln_type          = finding.vuln_type,
+                            source_filepath    = patched_code and finding.filepath or finding.filepath,
+                            exploitable_inputs = fuzz_comp.pre_patch.exploitable,
+                            safe_inputs        = [],
+                            crashes            = deduplicate_crashes(fuzz_comp.pre_patch.crashes),
+                            output_dir         = str(out_dir / "regression_tests"),
+                        )
+                    console.print(
+                        f"  [green]✓[/green] Generated {test_suite.test_count} regression tests: "
+                        f"{test_suite.filepath}"
+                    )
+
+                    # Run the tests on patched code
+                    if patched_code and test_suite.filepath.exists():
+                        with console.status("  [Regression] Running tests ...", spinner="dots"):
+                            post_run = run_tests(test_suite.filepath, phase="post_patch")
+                        passed_pct = (post_run.passed / max(post_run.total, 1)) * 100
+                        color = "green" if post_run.failed == 0 else "yellow"
+                        console.print(
+                            f"  [{color}]Regression: {post_run.passed}/{post_run.total} passed "
+                            f"({passed_pct:.0f}%)[/{color}]"
+                        )
+            else:
+                # No patch — just fuzz pre-patch to confirm exploit
+                pre_result = fuzzer.fuzz_function(
+                    source_code   = source_code,
+                    function_name = func_name,
+                    vuln_type     = finding.vuln_type,
+                    phase         = "pre_patch",
+                    filepath      = finding.filepath,
+                )
+                if pre_result.triggered:
+                    console.print(
+                        f"  [red]Fuzzer confirmed exploit: "
+                        f"{len(pre_result.crashes)} crash(es) with "
+                        f"{pre_result.total_inputs} inputs[/red]"
+                    )
+                else:
+                    console.print(
+                        f"  [yellow]Fuzzer: {pre_result.total_inputs} inputs tested, "
+                        f"no crashes (may need model for better seeds)[/yellow]"
+                    )
+    else:
+        console.print("  [dim]Fuzzer: could not determine function name — skipped[/dim]")
+
+
+def _infer_function_name(source_code: str, lineno: int) -> str:
+    """Find the function that contains the given line number."""
+    import ast as _ast
+    try:
+        tree = _ast.parse(source_code)
+        for node in _ast.walk(tree):
+            if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                end = getattr(node, "end_lineno", node.lineno + 20)
+                if node.lineno <= lineno <= end:
+                    return node.name
+    except Exception:
+        pass
+    return ""
 
 
 # ── Display helpers ───────────────────────────────────────────────────────────
