@@ -408,7 +408,7 @@ def _run_phase2(
     out_dir = Path(out_dir_str)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    console.print(f"\n  [bold cyan]--- Phase 2: Deep Analysis ---[/bold cyan]")
+    console.print(f"\n  [bold cyan]--- Phase 2: Static + Dynamic Analysis & Formal Proof ---[/bold cyan]")
 
     # ── Z3 Formal Verification ─────────────────────────────────────────────
     with console.status("  [Z3] Running formal verification ...", spinner="dots"):
