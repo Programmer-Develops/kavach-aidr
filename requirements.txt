@@ -1,43 +1,43 @@
 # ============================================================
-# KAVACH-AIDR — Requirements (All Phases)
-# 100% open-source, 100% sovereign, zero foreign API calls
+# KAVACH-AIDR — Core & Extended System Requirements
+# Fully open-source, air-gapped, zero external API dependencies
 # ============================================================
 
-# --- CLI & Display ---
-rich>=13.7.0              # Beautiful terminal output, progress bars, tables
-click>=8.1.7              # CLI argument parsing
+# --- CLI, Terminal & Rich Display ---
+rich>=13.7.0              # Terminal UI, progress reporting, structured tables
+click>=8.1.7              # CLI command and option parsing
 
-# --- Static Analysis ---
-bandit>=1.7.8             # Python security linter (AST-based)
-semgrep>=1.50.0           # Pattern-based static analysis engine
+# --- Static Code Analysis ---
+bandit>=1.7.8             # AST-based Python security linter
+semgrep>=1.50.0           # Pattern-matching static analysis engine
 
-# --- Local LLM Inference (no internet, no foreign API) ---
-# Phi-3-mini (Microsoft) or CodeLlama (Meta) via llama.cpp
-# For CPU-only:  pip install llama-cpp-python
-# For CUDA GPU:  CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python
+# --- Local LLM Inference Engine (Offline GGUF) ---
+# Compatible with Phi-3-mini (Microsoft) and CodeLlama (Meta)
+# CPU Installation:  pip install llama-cpp-python
+# CUDA Acceleration: CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python
 llama-cpp-python>=0.2.56
 
-# --- Formal Verification ---
-z3-solver>=4.12.4.0       # Microsoft Z3 SMT solver
+# --- SMT Formal Verification ---
+z3-solver>=4.12.4.0       # Microsoft Z3 SMT theorem prover
 
-# --- System Utilities ---
-psutil>=5.9.8             # CPU / RAM / GPU detection
+# --- System & Hardware Introspection ---
+psutil>=5.9.8             # CPU, RAM, and GPU telemetry
 
-# --- Data & Utilities ---
+# --- Configuration & Serialization ---
 python-dotenv>=1.0.1
 PyYAML>=6.0.1
 toml>=0.10.2
 
-# --- Testing ---
+# --- Automated Testing & Quality Assurance ---
 pytest>=8.2.0
 pytest-cov>=5.0.0
 
-# --- Phase 3: Web Dashboard ---
-streamlit>=1.35.0         # Web UI dashboard
-plotly>=5.22.0            # Interactive charts
-pandas>=2.2.0             # Data manipulation for dashboard
+# --- Operations & Visual Analytics Dashboard ---
+streamlit>=1.35.0         # Interactive web operations UI
+plotly>=5.22.0            # Dynamic charts and gauge indicators
+pandas>=2.2.0             # Structured data analysis and filtering
 
-# --- API Server (optional — for future REST integration) ---
+# --- REST Service Interfaces (Optional) ---
 fastapi>=0.111.0
 uvicorn>=0.30.0
 pydantic>=2.7.0

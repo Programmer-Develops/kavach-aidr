@@ -1,9 +1,8 @@
 """
 graph_builder.py — Build a feature graph from parsed Python code.
 
-Converts ParsedCode into a numerical feature vector and adjacency structure
-that feeds into the VulnGNN (Phase 2). In Phase 1, this also produces a
-rich context dictionary used by the LLM reasoner.
+Converts ParsedCode into a structured CodeGraph with numerical feature vectors
+and adjacency relations for VulnGNN inference and AST taint flow analysis.
 """
 
 from dataclasses import dataclass, field

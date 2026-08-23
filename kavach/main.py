@@ -42,7 +42,7 @@ from kavach.audit.db import AuditDB
 from kavach.audit.audit_logger import AuditLogger
 from kavach.audit.siem_exporter import export_cef, export_json_findings
 
-# ── Phase 2 imports ───────────────────────────────────────────────────────────
+# ── Formal Verification, Fuzzing & GNN Imports ────────────────────────────────
 from kavach.verifier.z3_verifier import Z3Verifier, format_result as format_z3, PROVED, COUNTEREX
 from kavach.fuzzer.runner import KavachFuzzer, format_fuzz_comparison
 from kavach.fuzzer.crash_triager import deduplicate_crashes
@@ -86,7 +86,7 @@ def cli():
 @click.option("--top",     "-n", default=5,      help="Number of top findings to reason over (default: 5)")
 @click.option("--output",  "-o", default=None,   help="Output report directory (default: reports/)")
 @click.option("--no-patch",      is_flag=True,   help="Skip patch application (analysis only)")
-@click.option("--deep",          is_flag=True,   help="[Phase 2] Enable Z3 formal verification + fuzzer + GNN + regression tests")
+@click.option("--deep",          is_flag=True,   help="Enable multi-layer verification: Z3 formal proof + Fuzzer + VulnGNN")
 @click.option("--verbose", "-v", is_flag=True,   help="Verbose LLM output")
 @click.option("--export-cef",    is_flag=True,   help="Export CEF file for SIEM")
 def scan(target, model, top, output, no_patch, deep, verbose, export_cef):
@@ -240,9 +240,9 @@ def scan(target, model, top, output, no_patch, deep, verbose, export_cef):
             logger.log_patch_result(finding.finding_id, patch_result)
             _print_patch_result(finding, patch_result, validation)
 
-        # ── Phase 2: Deep Analysis (--deep flag) ──────────────────────────
+        # ── Multi-Layer Deep Verification (--deep flag) ──────────────────────
         if deep:
-            _run_phase2(
+            _run_deep_verification(
                 finding     = finding,
                 source_code = source_code,
                 patched_code= patched_code,
@@ -388,9 +388,9 @@ def info():
 
 
 
-# ── Phase 2 orchestrator ──────────────────────────────────────────────────────
+# ── Deep Verification Orchestrator ───────────────────────────────────────────
 
-def _run_phase2(
+def _run_deep_verification(
     finding      : object,
     source_code  : str,
     patched_code : str,
@@ -399,16 +399,16 @@ def _run_phase2(
     out_dir_str  : str,
 ) -> None:
     """
-    Run Phase 2 deep analysis on a single finding:
-      1. Z3 formal verification (pre/post patch)
-      2. Smart fuzzer (LLM-guided payloads)
-      3. Auto-generate regression tests
+    Run multi-layer verification on a single finding:
+      1. Z3 SMT formal verification (pre/post patch)
+      2. Dynamic execution & smart fuzzing (LLM-guided payloads)
+      3. Automated regression test generation
     """
     import ast as _ast
     out_dir = Path(out_dir_str)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    console.print(f"\n  [bold cyan]--- Phase 2: Static + Dynamic Analysis & Formal Proof ---[/bold cyan]")
+    console.print(f"\n  [bold cyan]--- Multi-Layer Verification: SMT Proof & Dynamic Fuzzing ---[/bold cyan]")
 
     # ── Z3 Formal Verification ─────────────────────────────────────────────
     with console.status("  [Z3] Running formal verification ...", spinner="dots"):
