@@ -1,0 +1,21 @@
+# KAVACH-AIDR — Streamlit Cloud Deployment Requirements
+# llama-cpp-python excluded (requires local GPU/CUDA)
+# All dashboard, analysis, GNN, Z3, and audit features work fully.
+
+rich>=13.7.0
+click>=8.1.7
+bandit>=1.7.8
+semgrep>=1.50.0
+z3-solver>=4.12.4.0
+psutil>=5.9.8
+python-dotenv>=1.0.1
+PyYAML>=6.0.1
+toml>=0.10.2
+pytest>=8.2.0
+pytest-cov>=5.0.0
+streamlit>=1.35.0
+plotly>=5.22.0
+pandas>=2.2.0
+fastapi>=0.111.0
+uvicorn>=0.30.0
+pydantic>=2.7.0
