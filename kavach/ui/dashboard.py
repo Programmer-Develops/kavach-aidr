@@ -19,10 +19,15 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 
-# Force UTF-8
+# Force UTF-8 on Windows (guarded — Streamlit replaces sys.stdout)
 if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    try:
+        if hasattr(sys.stdout, "buffer"):
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "buffer"):
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # ── Project root ───────────────────────────────────────────────────────────────
 ROOT = Path(__file__).parent.parent.parent  # kavach-aidr/
@@ -80,7 +85,7 @@ def setup_page():
 
 def render_sidebar():
     with st.sidebar:
-        st.image("https://img.shields.io/badge/KAVACH-AIDR-0066cc?style=for-the-badge", use_column_width=True)
+        st.image("https://img.shields.io/badge/KAVACH-AIDR-0066cc?style=for-the-badge", use_container_width=True)
         st.markdown("### 🛡️ KAVACH-AIDR")
         st.caption("Autonomous Intelligent Defensive Reasoner\nSovereign · Air-Gapped · Indian Armed Forces")
         st.divider()
