@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 """
 start_kavach.py -- One-command KAVACH-AIDR launcher with Cloudflare Tunnel
 Usage:  python start_kavach.py
