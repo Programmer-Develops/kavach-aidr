@@ -201,16 +201,30 @@ def page_run_scan():
         if deep:     cmd.append("--deep")
         if no_patch: cmd.append("--no-patch")
 
+        st.markdown("**Scan Output:**")
+        output_box = st.empty()
+        log_lines = []
+
         with st.spinner(f"Scanning {Path(target).name} ..."):
-            st.markdown("**Scan Output:**")
-            output_box = st.empty()
-            proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, timeout=120)
-            output_box.code(proc.stdout + proc.stderr, language="text")
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(ROOT),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            for line in proc.stdout:
+                log_lines.append(line)
+                # Keep updating output box in real time
+                output_box.code("".join(log_lines), language="text")
+            proc.wait()
 
         if proc.returncode == 0:
-            st.success("Scan complete! Check the Findings tab.")
+            st.success("✅ Scan complete! Check the Findings and Audit Trail tabs.")
         else:
-            st.warning(f"Scan finished with warnings (exit {proc.returncode})")
+            st.warning(f"Scan completed with exit code {proc.returncode}")
 
 
 def page_findings():
