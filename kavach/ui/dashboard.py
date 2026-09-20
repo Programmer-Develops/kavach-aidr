@@ -527,14 +527,19 @@ def _load_audit_events(db_path: Path) -> list:
         conn = sqlite3.connect(db_path)
         cur  = conn.cursor()
         cur.execute(
-            "SELECT run_id, event_type, timestamp, seq_num "
-            "FROM audit_events ORDER BY timestamp DESC LIMIT 500"
+            "SELECT id, run_id, event_type, timestamp, hmac_sig "
+            "FROM audit_events ORDER BY id DESC LIMIT 500"
         )
         rows = cur.fetchall()
         conn.close()
         return [
-            {"run_id": r[0], "event_type": r[1],
-             "timestamp": r[2][:19] if r[2] else "", "seq": r[3]}
+            {
+                "Event #": r[0],
+                "run_id": r[1],
+                "Event Type": r[2],
+                "Timestamp (UTC)": r[3][:19].replace("T", " ") if r[3] else "",
+                "HMAC-SHA256 Signature": (r[4][:24] + "...") if r[4] else "",
+            }
             for r in rows
         ]
     except Exception:
