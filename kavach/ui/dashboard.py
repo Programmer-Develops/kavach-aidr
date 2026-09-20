@@ -85,7 +85,7 @@ def setup_page():
 
 def render_sidebar():
     with st.sidebar:
-        st.image("https://img.shields.io/badge/KAVACH-AIDR-0066cc?style=for-the-badge", use_container_width=True)
+        st.image("https://img.shields.io/badge/KAVACH-AIDR-0066cc?style=for-the-badge")
         st.markdown("### 🛡️ KAVACH-AIDR")
         st.caption("Autonomous Intelligent Defensive Reasoner\nSovereign · Air-Gapped · Indian Armed Forces")
         st.divider()
