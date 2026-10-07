@@ -175,6 +175,20 @@ def scan(target, model, top, output, no_patch, deep, verbose, export_cef):
     # ── Step 3: Merge & Rank ──────────────────────────────────────────────
     with _step("Step 3/5", "Merging & ranking findings"):
         merged = merge_findings(semgrep_findings, bandit_findings, graph_findings)
+
+        # VulnGNN prior: file-level risk P(vuln) in [0,1] is added to each
+        # finding's priority score before ranking.
+        gnn_by_file = {}
+        for g in all_graphs:
+            try:
+                gnn_by_file[str(Path(g.filepath).resolve())] = \
+                    predict_vulnerability(g).vulnerability_prob
+            except Exception:
+                pass
+        for mf in merged:
+            mf.score += gnn_by_file.get(str(Path(mf.filepath).resolve()), 0.0)
+        merged.sort(key=lambda m: m.score, reverse=True)
+
         summary = findings_summary(merged)
 
     logger.log_static_analysis_complete(
@@ -229,18 +243,16 @@ def scan(target, model, top, output, no_patch, deep, verbose, export_cef):
         # Display reasoning output
         _print_reasoning(finding, result, i)
 
-        # ── Step 5: Apply Patch ───────────────────────────────────────────
+        # ── Step 5: Apply patch, then Z3 verification with re-prompt loop ──────
         patched_code = ""
+        z3_result    = None
         if not no_patch and result.patch_found and source_code:
-            parsed_patch = parse_patch(result.patch_diff)
-            patch_result = apply_patch(source_code, parsed_patch, finding.filepath)
-            validation   = validate_patch(source_code, patch_result.patched_code) if patch_result.success else None
-            patched_code = patch_result.patched_code if patch_result.success else ""
-
-            logger.log_patch_result(finding.finding_id, patch_result)
-            _print_patch_result(finding, patch_result, validation)
+            patched_code, z3_result = _patch_and_verify(
+                finding, result, source_code, cot, logger,
+            )
 
         # ── Multi-Layer Deep Verification (--deep flag) ──────────────────────
+        # Stage 4: only patches that were not REJECTED by Z3 reach the fuzzer.
         if deep:
             _run_deep_verification(
                 finding     = finding,
@@ -249,6 +261,7 @@ def scan(target, model, top, output, no_patch, deep, verbose, export_cef):
                 engine      = engine,
                 run_id      = run_id,
                 out_dir_str = str(Path(output) if output else cfg.reports_dir / run_id),
+                z3_result   = z3_result,
             )
 
     # ── GNN scan of all graphs (deep mode) ────────────────────────────────
@@ -388,6 +401,97 @@ def info():
 
 
 
+# ── Patch → Z3 verify → re-prompt loop (Stages 2-3 feedback) ─────────────────
+
+MAX_REPAIR_ATTEMPTS = 3   # candidate patches tried before the finding is rejected
+
+
+def _apply_diff(source_code: str, diff: str, filepath: str):
+    """Apply a unified diff to the ORIGINAL source; return (patch_result, validation)."""
+    parsed = parse_patch(diff)
+    pr     = apply_patch(source_code, parsed, filepath)
+    val    = validate_patch(source_code, pr.patched_code) if pr.success else None
+    return pr, val
+
+
+def _patch_and_verify(finding, result, source_code: str, cot, logger):
+    """
+    Stage 2 -> Stage 3 with counterexample-guided repair.
+
+        candidate patch P' --> Z3 --+-- Pass  --> accept P'  (continues to Stage 4)
+                                    +-- Fail  --> counterexample --> re-prompt LLM
+                                                  (up to MAX_REPAIR_ATTEMPTS)
+
+    Returns (patched_code, z3_result). patched_code is '' when the patch could not
+    be applied or every attempt was rejected by Z3.
+    """
+    verifier  = Z3Verifier(timeout_ms=5000)
+    diff      = result.patch_diff
+    z3_result = None
+    pr        = None
+
+    for attempt in range(1, MAX_REPAIR_ATTEMPTS + 1):
+        pr, val = _apply_diff(source_code, diff, finding.filepath)
+        logger.log_patch_result(finding.finding_id, pr)
+        _print_patch_result(finding, pr, val)
+
+        if not pr.success:
+            return "", z3_result           # nothing to verify
+
+        with console.status(f"  [Z3] Verifying candidate patch (attempt {attempt}/{MAX_REPAIR_ATTEMPTS}) ...",
+                            spinner="dots"):
+            z3_result = verifier.verify(
+                finding_id   = finding.finding_id,
+                vuln_type    = finding.vuln_type,
+                filepath     = finding.filepath,
+                lineno       = finding.lineno,
+                original_src = source_code,
+                patched_src  = pr.patched_code,
+            )
+
+        cex = dict(z3_result.post_patch_step.model_values) if z3_result.post_patch_step else {}
+        logger.log_verification(
+            finding_id     = finding.finding_id,
+            attempt        = attempt,
+            verdict        = z3_result.verdict,
+            pre_result     = z3_result.pre_patch_step.result  if z3_result.pre_patch_step  else "",
+            post_result    = z3_result.post_patch_step.result if z3_result.post_patch_step else "",
+            counterexample = cex,
+            explanation    = z3_result.explanation,
+            duration_sec   = z3_result.total_sec,
+        )
+        console.print(f"  {format_z3(z3_result)}")
+
+        if z3_result.verdict != COUNTEREX:
+            tag = "[bold green]PASS[/bold green]" if z3_result.verdict == PROVED \
+                  else "[yellow]NOT VERIFIABLE (kept, flagged unverified)[/yellow]"
+            console.print(f"  Verification {tag}")
+            return pr.patched_code, z3_result
+
+        # ---- FAIL: counterexample found --------------------------------------
+        console.print(f"  [bold red]Verification FAIL[/bold red] "
+                      f"[dim](attempt {attempt}/{MAX_REPAIR_ATTEMPTS})[/dim]")
+        if attempt == MAX_REPAIR_ATTEMPTS:
+            break
+        with console.status("  [LLM] Re-prompting with Z3 counterexample ...", spinner="dots"):
+            new_diff = cot.refine_with_counterexample(
+                finding        = finding,
+                source_code    = source_code,
+                file_path      = finding.filepath,
+                failed_patch   = diff,
+                counterexample = cex,
+                explanation    = z3_result.explanation,
+            )
+        if not new_diff.strip():
+            console.print("  [yellow]LLM produced no revised patch.[/yellow]")
+            break
+        diff = new_diff
+
+    console.print("  [bold red]Patch REJECTED:[/bold red] could not be proven safe; "
+                  "original code left unchanged.")
+    return "", z3_result
+
+
 # ── Deep Verification Orchestrator ───────────────────────────────────────────
 
 def _run_deep_verification(
@@ -397,32 +501,33 @@ def _run_deep_verification(
     engine       : object,
     run_id       : str,
     out_dir_str  : str,
+    z3_result    : object = None,
 ) -> None:
     """
-    Run multi-layer verification on a single finding:
-      1. Z3 SMT formal verification (pre/post patch)
-      2. Dynamic execution & smart fuzzing (LLM-guided payloads)
-      3. Automated regression test generation
+    Stage 4 on a single finding (Z3 already ran in _patch_and_verify):
+      1. Dynamic execution & smart fuzzing (LLM-guided payloads)
+      2. Automated regression test generation
+    If no patch was produced, Z3 is run once on the original code to confirm
+    the exploit.
     """
     import ast as _ast
     out_dir = Path(out_dir_str)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    console.print(f"\n  [bold cyan]--- Multi-Layer Verification: SMT Proof & Dynamic Fuzzing ---[/bold cyan]")
+    console.print(f"\n  [bold cyan]--- Stage 4: Dynamic Fuzzing & Regression ---[/bold cyan]")
 
-    # ── Z3 Formal Verification ─────────────────────────────────────────────
-    with console.status("  [Z3] Running formal verification ...", spinner="dots"):
-        verifier = Z3Verifier(timeout_ms=5000)
-        z3_result = verifier.verify(
-            finding_id   = finding.finding_id,
-            vuln_type    = finding.vuln_type,
-            filepath     = finding.filepath,
-            lineno       = finding.lineno,
-            original_src = source_code,
-            patched_src  = patched_code or source_code,
-        )
-
-    console.print(f"  {format_z3(z3_result)}")
+    # ── Z3: only needed here if no patch went through the verify loop ─────────
+    if z3_result is None:
+        with console.status("  [Z3] Confirming exploit on original code ...", spinner="dots"):
+            z3_result = Z3Verifier(timeout_ms=5000).verify(
+                finding_id   = finding.finding_id,
+                vuln_type    = finding.vuln_type,
+                filepath     = finding.filepath,
+                lineno       = finding.lineno,
+                original_src = source_code,
+                patched_src  = source_code,
+            )
+        console.print(f"  {format_z3(z3_result)}")
 
     # ── Smart Fuzzer ───────────────────────────────────────────────────────
     # Extract function name from finding context

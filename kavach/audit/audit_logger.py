@@ -109,6 +109,21 @@ class AuditLogger:
             "diff_summary" : patch_result.diff_summary,
         })
 
+    def log_verification(self, finding_id: str, attempt: int, verdict: str,
+                         pre_result: str, post_result: str, counterexample: dict,
+                         explanation: str, duration_sec: float) -> None:
+        """Log one Z3 verification attempt (Pass / Fail) for a candidate patch."""
+        self._log("Z3_VERIFICATION", {
+            "finding_id"     : finding_id,
+            "attempt"        : attempt,
+            "verdict"        : verdict,
+            "pre_patch"      : pre_result,
+            "post_patch"     : post_result,
+            "counterexample" : counterexample,
+            "explanation"    : explanation[:500],
+            "duration_sec"   : duration_sec,
+        })
+
     def log_scan_complete(
         self,
         total_findings : int,

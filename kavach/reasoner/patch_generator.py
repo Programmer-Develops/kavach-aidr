@@ -75,41 +75,68 @@ def parse_patch(raw_llm_output: str) -> ParsedPatch:
 
 def apply_simple_patch(source_code: str, patch: ParsedPatch) -> str:
     """
-    Apply a simple line-replacement patch to source code.
-
-    This is a lightweight applier for cases where the standard `patch`
-    command is not available. Replaces old lines with new lines sequentially.
-
-    For robust unified diff application, use patcher.patch_applicator instead.
-
-    Args:
-        source_code : Original source code string.
-        patch       : ParsedPatch from parse_patch().
-
-    Returns:
-        Patched source code string.
+    Apply a patch to source code using block matching and line replacement.
+    Handles unequal counts of old and new lines (e.g., multi-line removals).
     """
     if not patch.is_valid:
         return source_code
 
+    if not patch.old_lines and not patch.new_lines:
+        return source_code
+
     lines = source_code.splitlines(keepends=True)
+
+    # Strategy 1: Contiguous block match (stripped)
+    if patch.old_lines:
+        n_old = len(patch.old_lines)
+        old_stripped = [l.strip() for l in patch.old_lines]
+        for i in range(len(lines) - n_old + 1):
+            if all(lines[i + j].strip() == old_stripped[j] for j in range(n_old)):
+                orig_indent = len(lines[i]) - len(lines[i].lstrip())
+                formatted_new = []
+                for nl in patch.new_lines:
+                    if nl and not nl.endswith("\n"):
+                        nl = nl + "\n"
+                    if nl and len(nl) - len(nl.lstrip()) == 0:
+                        nl = " " * orig_indent + nl
+                    formatted_new.append(nl)
+                return "".join(lines[:i] + formatted_new + lines[i + n_old:])
+
+    # Strategy 2: Line-by-line matching with proper handling of unequal counts
     result = list(lines)
+    matched_indices = []
+    for old in patch.old_lines:
+        target = old.strip()
+        if not target:
+            continue
+        for idx, line in enumerate(result):
+            if idx not in matched_indices and line.strip() == target:
+                matched_indices.append(idx)
+                break
 
-    # Create a mapping: old_line_content → new_line_content
-    replacements = {}
-    for old, new in zip(patch.old_lines, patch.new_lines):
-        replacements[old.rstrip("\n")] = new
+    if matched_indices:
+        matched_indices.sort()
+        formatted_new = []
+        for nl in patch.new_lines:
+            if nl and not nl.endswith("\n"):
+                nl = nl + "\n"
+            formatted_new.append(nl)
 
-    for i, line in enumerate(result):
-        stripped = line.rstrip("\n")
-        if stripped in replacements:
-            # Preserve original indentation if the new line has none
-            new_content = replacements[stripped]
-            if new_content.strip():
-                result[i] = new_content + "\n"
-            del replacements[stripped]   # Apply each replacement once
+        if len(patch.new_lines) <= len(matched_indices):
+            for k, idx in enumerate(matched_indices):
+                if k < len(formatted_new):
+                    result[idx] = formatted_new[k]
+                else:
+                    result[idx] = ""  # Delete excess old lines
+        else:
+            for k in range(len(matched_indices) - 1):
+                result[matched_indices[k]] = formatted_new[k]
+            last_idx = matched_indices[-1]
+            result[last_idx] = "".join(formatted_new[len(matched_indices) - 1:])
 
-    return "".join(result)
+        return "".join(result)
+
+    return source_code
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────

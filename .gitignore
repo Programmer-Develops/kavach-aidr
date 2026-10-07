@@ -115,3 +115,16 @@ Thumbs.db
 
 # --- Jupyter Notebooks ---
 .ipynb_checkpoints/
+
+# --- Datasets ---
+data/cvefixes/
+data/processed/
+
+# --- Temp & Utility Files ---
+*.exe
+*.zip
+head.txt
+sample_lines.txt
+schema.txt
+schema_clean.txt
+KAVACH_AIDR_Idea_Presentation.pptx

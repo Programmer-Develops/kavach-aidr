@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from kavach.verifier.constraint_builder import SMTConstraint, build_constraints
+from kavach.verifier import program_model as pm
 
 try:
     from z3 import Solver, sat, unsat, unknown, set_option
@@ -118,7 +119,16 @@ class Z3Verifier:
                 total_sec   = 0.0,
             )
 
-        # ── Build constraints ──────────────────────────────────────────────
+        # ── Program-aware encoding (preferred) ─────────────────────────────
+        # phi_vuln(x, P) is built from the AST of each program version, so the
+        # verdict depends on what the patch actually does.
+        if vuln_type in pm.SUPPORTED:
+            return self._verify_program_aware(
+                finding_id, vuln_type, filepath, lineno,
+                original_src, patched_src, start,
+            )
+
+        # ── Build constraints (abstract fallback) ──────────────────────────
         constraint = build_constraints(vuln_type, original_src, lineno, filepath)
 
         if not constraint.encodable:
@@ -165,6 +175,84 @@ class Z3Verifier:
             total_sec       = round(time.time() - start, 3),
             constraint      = constraint,
         )
+
+    def _verify_program_aware(
+        self,
+        finding_id, vuln_type, filepath, lineno,
+        original_src, patched_src, start,
+    ) -> "VerificationResult":
+        """
+        Check phi_vuln(x, P) on the original program P and on the patched
+        program P'. The formula for each version is derived from its AST
+        (see program_model.py), so the post-patch verdict depends on the patch.
+
+          pre  = SAT    -> exploit input exists in P           (finding confirmed)
+          post = UNSAT  -> no exploit input exists in P'       (PROVED)
+          post = SAT    -> Z3 returns an exploit input for P'  (COUNTEREXAMPLE)
+        """
+        func = pm.enclosing_function(original_src, lineno)
+
+        # ---- pre-patch -----------------------------------------------------
+        pre_pf = pm.build_program_formula(vuln_type, original_src, func)
+        if pre_pf.ok:
+            pre_formula = pre_pf.formula
+        else:
+            # Original sink not recognised: confirm the finding with the
+            # abstract class-level formula instead.
+            abstract = build_constraints(vuln_type, original_src, lineno, filepath)
+            pre_formula = abstract.vulnerable_formula
+        if pre_formula is None:
+            return VerificationResult(
+                finding_id, vuln_type, INCONCLUSIVE,
+                f"Could not encode the original program: {pre_pf.note}",
+                total_sec=round(time.time() - start, 3),
+            )
+
+        pre_step = self._check(
+            formula     = pre_formula,
+            label       = "vulnerable_pre_patch",
+            description = "Checking: can an attacker input reach a dangerous sink in the ORIGINAL code? "
+                          + self._sink_summary(pre_pf),
+            expect_sat  = True,
+        )
+
+        # ---- post-patch ----------------------------------------------------
+        post_pf = pm.build_program_formula(vuln_type, patched_src, func)
+        if not post_pf.ok:
+            return VerificationResult(
+                finding_id, vuln_type, INCONCLUSIVE,
+                f"Patched program could not be encoded: {post_pf.note}",
+                pre_patch_step = pre_step,
+                total_sec      = round(time.time() - start, 3),
+            )
+
+        post_step = self._check(
+            formula     = post_pf.formula,
+            label       = "safe_post_patch",
+            description = "Proving: can an attacker input reach a dangerous sink in the PATCHED code? "
+                          + self._sink_summary(post_pf),
+            expect_sat  = False,
+        )
+
+        verdict, explanation = self._determine_verdict(pre_step, post_step, vuln_type)
+        if post_pf.note and verdict == PROVED:
+            explanation += f"\n   Model note: {post_pf.note}."
+        return VerificationResult(
+            finding_id      = finding_id,
+            vuln_type       = vuln_type,
+            verdict         = verdict,
+            explanation     = explanation,
+            pre_patch_step  = pre_step,
+            post_patch_step = post_step,
+            total_sec       = round(time.time() - start, 3),
+        )
+
+    @staticmethod
+    def _sink_summary(pf) -> str:
+        if not pf.ok or not pf.sink_report:
+            return pf.note
+        items = "; ".join(f"L{ln} {kind}: {txt}" for ln, kind, txt in pf.sink_report[:4])
+        return f"[{pf.dynamic_sinks} dynamic / {pf.static_sinks} static sink(s): {items}]"
 
     def verify_property(
         self,

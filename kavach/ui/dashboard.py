@@ -392,8 +392,6 @@ def page_about():
     ## KAVACH-AIDR
     ### Autonomous Intelligent Defensive Reasoner
 
-    **Developed for:** AI Kavach — Indian Army Terrier Cyber Quest 2026
-
     ---
 
     ### What KAVACH means

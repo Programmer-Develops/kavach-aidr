@@ -136,6 +136,45 @@ class ChainOfThought:
 
         return result
 
+    def refine_with_counterexample(
+        self,
+        finding        : MergedFinding,
+        source_code    : str,
+        file_path      : str,
+        failed_patch   : str,
+        counterexample : dict,
+        explanation    : str,
+    ) -> str:
+        """
+        Re-prompt the LLM after Z3 verification FAILED (counterexample found).
+
+        The exploit input produced by Z3 and the solver's explanation are added
+        to the original analysis prompt so the model can repair its own patch.
+
+        Returns:
+            A new unified-diff patch string ('' if the model produced none).
+        """
+        if not (self.engine is not None and self.engine.is_loaded()):
+            return ""
+
+        cex = ", ".join(f"{k} = {v!r}" for k, v in counterexample.items()) or "(none reported)"
+        feedback = (
+            "\n\n## FORMAL VERIFICATION FAILED\n"
+            "Your previous patch was checked with the Z3 SMT solver and is still exploitable.\n"
+            f"Counterexample (attacker input that still reaches the sink): {cex}\n"
+            f"Solver report: {explanation}\n\n"
+            "Previous patch:\n"
+            f"{failed_patch}\n\n"
+            "Write a corrected patch that removes the injection path entirely "
+            "(for example a parameterised query, an argument list without a shell, "
+            "or a validated path). Use the same PATCH_START / PATCH_END format."
+        )
+        prompt = build_analysis_prompt(finding, source_code, file_path) + feedback
+        resp   = self._call(prompt, step_name="z3_counterexample_refinement")
+        text   = resp["response"].text
+        patch_raw = self._extract_section(text, "PATCH", "VERIFICATION")
+        return self._extract_patch_diff(patch_raw or text)
+
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _call(self, prompt: str, step_name: str) -> dict:
